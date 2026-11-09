@@ -114,10 +114,62 @@ const STATE = {
   ],
   market: { open: true, session: 'morning', label: '交易中', shanghai: '10:23' },
   updatedAt: Date.now(),
+  // v2：账户现金 + 手动分红（首页摘要卡 / 饼图 / 分红统计用）
+  accounts: [
+    { id: 'ac1', name: 'A股主账户', cash: 50000 },
+    { id: 'ac2', name: '港股账户', cash: 12000 },
+  ],
+  dividends: [
+    {
+      id: 'd1', symbol: MAOTAI, code: '600519', name: '贵州茅台',
+      date: '2026-06-20', perShare10: 210, shares: 100, amount: 2100,
+    },
+    {
+      id: 'd2', symbol: PINGAN, code: '000001', name: '平安银行',
+      date: '2026-07-10', perShare10: 20, shares: 2000, amount: 400,
+    },
+  ],
 };
 // 宿主返回的 items 是「每只标的一条」（按 symbol upsert），指数也在里面、靠 index 标记区分。
 // 这里曾经写成「非指数项 + 全部」，导致同一只出现两次，把表格行数和选中数的断言都带偏了。
 STATE.items = STATE.strip.slice();
+
+/** 首页摘要：对齐宿主 computeSummary 的返回结构（现金 / 总资产 / 总投入 / 当日涨跌幅 / 分红统计） */
+STATE.summary = {
+  currency: 'CNY', hasPosition: true,
+  marketValue: STATE.totals.marketValue,
+  costValue: STATE.totals.costValue,
+  pnl: STATE.totals.pnl,
+  pnlPct: 9.53,
+  dayPnl: STATE.totals.dayPnl,
+  dayPct: -0.064,
+  upCount: 1, downCount: 1, flatCount: 0,
+  cash: 62000,
+  hasCash: true,
+  totalAssets: STATE.totals.marketValue + 62000,
+  totalInvested: STATE.totals.costValue + 62000,
+  heldCount: 2,
+  accounts: STATE.accounts,
+  dividends: {
+    count: STATE.dividends.length,
+    amount: STATE.dividends.reduce((s, d) => s + d.amount, 0),
+    recent: STATE.dividends.slice(0, 5).map((d) => ({
+      id: d.id, symbol: d.symbol, name: d.name, date: d.date, amount: d.amount,
+    })),
+  },
+};
+
+/** 打新日历夹具：本周一只新股 + 零只新债（真实数据里新债经常是 0） */
+const IPO_BODY = {
+  ok: true,
+  from: '2026-10-16', to: '2026-10-23', days: 7,
+  stocks: [
+    { code: '920067', name: '华晟智能', date: '2026-10-18', price: 23.52, market: '北京证券交易所' },
+  ],
+  bonds: [],
+  fetchedAt: Date.now(),
+  cached: false,
+};
 
 /* ---------- 分时 / 盘口 / 流水 夹具 ---------- */
 
@@ -271,6 +323,8 @@ function mkCandles(n) {
 const ALL_CANDLES = mkCandles(800);
 
 const fetchLog = [];
+/** 所有 POST 的请求体，便于断言"界面上的操作真的落到了对应接口" */
+const postLog = [];
 /** 故障注入。null = 正常；'auth' = 宿主路由不存在，DSH 回 401；
  *  'offline' = 本地服务没起来，fetch 直接 reject。 */
 let FAULT = null;
@@ -279,6 +333,9 @@ let DROP_UNKNOWN_SETTINGS = false;
 function fakeFetch(url, init = {}) {
   const u = String(url);
   fetchLog.push(u);
+  if (String((init && init.method) || '').toUpperCase() === 'POST') {
+    try { postLog.push({ url: u, body: JSON.parse(init.body || '{}') }); } catch { postLog.push({ url: u, body: null }); }
+  }
   if (FAULT === 'offline') return Promise.reject(new TypeError('fetch failed'));
   if (FAULT === 'auth') {
     return Promise.resolve({
@@ -356,6 +413,53 @@ function fakeFetch(url, init = {}) {
       STATE.settings = { ...STATE.settings, ...patch };
       body = { ok: true, settings: STATE.settings };
     }
+  } else if (u.includes('/accounts/save')) {
+    // 宿主契约：POST /accounts/save -> { ok, account, state }
+    let patch = {};
+    try { patch = JSON.parse(init.body || '{}'); } catch { /* 空补丁 */ }
+    let ac = patch.id ? STATE.accounts.find((a) => a.id === patch.id) : null;
+    if (ac) {
+      if (patch.name !== undefined) ac.name = String(patch.name);
+      if (patch.cash !== undefined) ac.cash = Number(patch.cash) || 0;
+    } else {
+      ac = { id: `ac${STATE.accounts.length + 1}`, name: patch.name || '新账户', cash: Number(patch.cash) || 0 };
+      STATE.accounts.push(ac);
+    }
+    body = { ok: true, account: ac, state: STATE };
+  } else if (u.includes('/accounts/remove')) {
+    let patch = {};
+    try { patch = JSON.parse(init.body || '{}'); } catch { /* 空补丁 */ }
+    const i = STATE.accounts.findIndex((a) => a.id === patch.id);
+    if (i >= 0) STATE.accounts.splice(i, 1);
+    body = { ok: true, removed: i >= 0, state: STATE };
+  } else if (u.includes('/dividends/save')) {
+    // 宿主契约：POST /dividends/save -> { ok, dividend, state }
+    let patch = {};
+    try { patch = JSON.parse(init.body || '{}'); } catch { /* 空补丁 */ }
+    const amount = Number(patch.amount) > 0
+      ? Number(patch.amount)
+      : Math.round(((Number(patch.perShare10) || 0) / 10) * (Number(patch.shares) || 0) * 100) / 100;
+    const rec = {
+      id: `d${STATE.dividends.length + 1}`,
+      symbol: patch.symbol || MAOTAI,
+      code: '600519',
+      name: patch.name || '贵州茅台',
+      date: patch.date || '2026-10-16',
+      perShare10: Number(patch.perShare10) || 0,
+      shares: Number(patch.shares) || 0,
+      amount,
+      note: patch.note || '',
+    };
+    STATE.dividends.unshift(rec);
+    body = { ok: true, dividend: rec, state: STATE };
+  } else if (u.includes('/dividends/remove')) {
+    let patch = {};
+    try { patch = JSON.parse(init.body || '{}'); } catch { /* 空补丁 */ }
+    const i = STATE.dividends.findIndex((d) => d.id === patch.id);
+    if (i >= 0) STATE.dividends.splice(i, 1);
+    body = { ok: true, removed: i >= 0, state: STATE };
+  } else if (u.includes('/ipo/calendar')) {
+    body = IPO_BODY;
   } else if (u.includes('/state')) body = STATE;
   else if (u.includes('/kline')) {
     const q = new URL(u, 'http://x').searchParams;
@@ -1003,7 +1107,7 @@ section('面板常展开（侧边栏版无需点击开面板）');
   check('面板文案含持仓只数（竖排导航底部）', /只持仓/.test(allText(tree)), null);
 }
 
-section('首页指数卡片（默认选中上证直接出图；点卡片收起/展开，指数无成本线/盘口/复权）');
+section('首页：持仓摘要置顶 / 指数详情默认收起 / 点卡展开收起');
 {
   const clickRail = (label) => {
     const b = collect(tree).filter((n) => n.tag === 'button').find((x) => allText(x.kids).includes(label));
@@ -1011,14 +1115,31 @@ section('首页指数卡片（默认选中上证直接出图；点卡片收起/�
     return !!b;
   };
   check('切到首页', clickRail('首页'));
-  await settle(8);
+  await settle(12);
+
+  // 信息层级：最上层是自己的持仓摘要，指数详情默认不展开
+  check('首页最上层是持仓摘要卡', findByClass(tree, 'dst-sum-card').length >= 1,
+    findByClass(tree, 'dst-sum-card').length);
+  check('摘要卡含总资产 / 总投入 / 浮动盈亏 / 当日盈亏',
+    ['总资产', '总投入', '持仓市值', '持仓成本', '浮动盈亏', '当日盈亏']
+      .every((t) => allText(tree).includes(t)), null);
+  check('摘要卡有现金环形图', findByClass(tree, 'dst-donut').length >= 1,
+    findByClass(tree, 'dst-donut').length);
+  check('现金图例列出两个账户',
+    allText(tree).includes('A股主账户') && allText(tree).includes('港股账户'), null);
+  check('默认不展开指数详情（首屏是自己的持仓）',
+    findByClass(tree, 'dst-kline-title').length === 0,
+    findByClass(tree, 'dst-kline-title').length);
+
   const cards = findByClass(tree, 'dst-idx');
   check('首页 8 张指数卡片', cards.length === 8, cards.length);
 
-  // 默认选中上证指数：详情区直接渲染，不用点卡片
+  // 点第一张卡片（上证）才展开详情
+  cards[0].props.onClick({ preventDefault() {}, stopPropagation() {} });
+  await settle(14);
   const title = findByClass(tree, 'dst-kline-title')[0];
-  check('默认选中上证指数：详情区已展开', !!title && /上证指数/.test(allText(title.kids)), null);
-  check('默认渲染了分时', fetchLog.some((u) => u.includes('/trends')),
+  check('点卡片展开上证详情', !!title && /上证指数/.test(allText(title.kids)), null);
+  check('展开后拉分时', fetchLog.some((u) => u.includes('/trends')),
     fetchLog.filter((u) => u.includes('/trends')).slice(0, 2));
   check('上证卡片处于高亮态',
     findByClass(tree, 'dst-idx').some((n) => /dst-on/.test(String((n.props && n.props.className) || ''))
@@ -1040,22 +1161,134 @@ section('首页指数卡片（默认选中上证直接出图；点卡片收起/�
     fetchLog.some((u) => /kline\?symbol=sh000001/.test(u)),
     fetchLog.filter((u) => u.includes('/kline')).slice(-1));
 
-  // 点卡片收起详情，再点展开（切换式选中）
-  cards[0].props.onClick({ preventDefault() {}, stopPropagation() {} });
-  await settle(10);
-  check('点卡片收起详情', findByClass(tree, 'dst-kline-title').length === 0,
-    findByClass(tree, 'dst-kline-title').length);
+  // 再点一次同一张卡片：切换式收起
   const cards2 = findByClass(tree, 'dst-idx');
-  if (cards2.length) cards2[0].props.onClick({ preventDefault() {}, stopPropagation() {} });
+  cards2[0].props.onClick({ preventDefault() {}, stopPropagation() {} });
   await settle(12);
-  const title2 = findByClass(tree, 'dst-kline-title')[0];
-  check('再点卡片展开详情（仍是上证指数）', !!title2 && /上证指数/.test(allText(title2.kids)), null);
+  check('再点卡片收起详情', findByClass(tree, 'dst-kline-title').length === 0,
+    findByClass(tree, 'dst-kline-title').length);
 
-  // 后续用例从持仓表格开始：切回「持仓」（选中的是指数，持仓表格不应冒出指数图表）
+  // 后续用例从持仓表格开始：切回「持仓」
   check('切回持仓', clickRail('持仓'));
   await settle(8);
   check('持仓表格下没有指数的图表详情', findByClass(tree, 'dst-kline-title').length === 0,
     findByClass(tree, 'dst-kline-title').length);
+}
+
+section('首页：分红统计与打新日历');
+{
+  const clickRail = (label) => {
+    const b = collect(tree).filter((n) => n.tag === 'button').find((x) => allText(x.kids).includes(label));
+    if (b) b.props.onClick({});
+    return !!b;
+  };
+  check('切到首页', clickRail('首页'));
+  await settle(12);
+
+  check('首页有分红统计卡', allText(tree).includes('分红记录'), null);
+  check('分红笔数与金额来自 state.summary',
+    /共 2 笔/.test(allText(tree)) && /2,500/.test(allText(tree)),
+    allText(tree).slice(0, 400));
+  check('分红卡写明“不计入收益”', /不计入收益/.test(allText(tree)), null);
+
+  check('首页有打新日历卡', allText(tree).includes('未来 7 天打新'), null);
+  check('打新数量按接口数据渲染', /新股 1 只 · 新债 0 只/.test(allText(tree)),
+    allText(tree).slice(0, 400));
+  check('打新列表带出新股名称与申购日',
+    allText(tree).includes('华晟智能') && allText(tree).includes('2026-10-18'), null);
+  check('打新卡注明仅 A 股', /仅 A 股/.test(allText(tree)), null);
+}
+
+section('添加页：手动记一笔分红');
+{
+  const clickRail = (label) => {
+    const b = collect(tree).filter((n) => n.tag === 'button').find((x) => allText(x.kids).includes(label));
+    if (b) b.props.onClick({});
+    return !!b;
+  };
+  check('切到「添加」', clickRail('添加'));
+  await settle(10);
+  check('添加页有分红表单', allText(tree).includes('记一笔分红'), null);
+  check('分红表单字段齐全',
+    ['标的', '除权除息日', '每10股派息', '股数', '金额', '备注']
+      .every((t) => allText(tree).includes(t)), null);
+
+  /** 找到某个 label 下面的输入框 */
+  const inputUnder = (label) => {
+    const lab = collect(tree).find((n) => n.tag === 'label' && allText(n.kids).includes(label));
+    return lab ? collect(lab).find((n) => n.tag === 'input') : null;
+  };
+  const pickBtn = () => collect(tree).filter((n) => n.tag === 'button').find((b) => allText(b).trim() === '记入分红');
+
+  // 什么都不填就提交：给出中文提示，不发请求
+  const before = postLog.length;
+  pickBtn().props.onClick({});
+  await settle(8);
+  check('空表单提交给出提示', /先选一个标的|填「每 10 股派息」/.test(allText(tree)), null);
+  check('空表单不落库', postLog.length === before, postLog.slice(before));
+
+  // 选标的（自动带出股数）+ 填每10股派息 → 金额自动算
+  const sel = collect(tree).find((n) => n.tag === 'select');
+  check('标的下拉存在', !!sel, null);
+  sel.props.onChange({ target: { value: MAOTAI } });
+  await settle(8);
+  const per10 = inputUnder('每10股派息');
+  check('每 10 股派息输入框存在', !!per10, null);
+  per10.props.onChange({ target: { value: '210' } });
+  await settle(8);
+  const amount = inputUnder('金额');
+  check('金额按 210/10×100 自动算出 2100', !!amount && String(amount.props.value) === '2100',
+    amount && amount.props.value);
+
+  pickBtn().props.onClick({});
+  await settle(10);
+  check('分红提交到 /dividends/save',
+    postLog.some((p) => p.url.includes('/dividends/save')), postLog.slice(-3));
+  const sent = postLog.filter((p) => p.url.includes('/dividends/save')).pop();
+  check('提交的金额与份额正确',
+    !!sent && sent.body && sent.body.amount === 2100 && sent.body.shares === 100,
+    sent && sent.body);
+  check('提交成功后有回执文案', /已记一笔分红/.test(allText(tree)), null);
+}
+
+section('设置页：账户与现金');
+{
+  const clickRail = (label) => {
+    const b = collect(tree).filter((n) => n.tag === 'button').find((x) => allText(x.kids).includes(label));
+    if (b) b.props.onClick({});
+    return !!b;
+  };
+  check('切到「设置」', clickRail('设置'));
+  await settle(10);
+  check('设置页有「账户与现金」分组', allText(tree).includes('账户与现金'), null);
+  check('列出已有账户（账户名在输入框里）',
+    collect(tree).some((n) => n.tag === 'input' && n.props.defaultValue === 'A股主账户')
+    && collect(tree).some((n) => n.tag === 'input' && n.props.defaultValue === '港股账户'),
+    collect(tree).filter((n) => n.tag === 'input').map((n) => n.props.defaultValue));
+  check('说明了总资产口径', /总资产 = 现金 \+ 持仓市值/.test(allText(tree)), null);
+
+  // 改一个账户的现金：失焦保存
+  const cashInput = collect(tree).find((n) => n.tag === 'input' && String(n.props.defaultValue) === '50000');
+  check('找到现金输入框', !!cashInput, null);
+  cashInput.props.onBlur({ target: { value: '80000' } });
+  await settle(10);
+  check('现金改动保存到 /accounts/save',
+    postLog.some((p) => p.url.includes('/accounts/save') && p.body && p.body.cash === 80000),
+    postLog.slice(-3));
+
+  // 新增账户
+  const before = postLog.length;
+  const addBtn = collect(tree).filter((n) => n.tag === 'button').find((b) => allText(b).includes('新增账户'));
+  check('有「+ 新增账户」按钮', !!addBtn, null);
+  addBtn.props.onClick({});
+  await settle(10);
+  check('新增账户提交到 /accounts/save',
+    postLog.slice(before).some((p) => p.url.includes('/accounts/save') && p.body && !p.body.id),
+    postLog.slice(before));
+
+  // 后续用例从持仓表格开始
+  check('切回持仓', clickRail('持仓'));
+  await settle(10);
 }
 
 section('持仓表格');
@@ -1671,8 +1904,11 @@ section('组件开关（设置 → 显示）');
       .every((l) => allText(tree).includes(l)), null);
   check('设置里没有已退役的标签页开关',
     !['流水标签页', '预警标签页', 'AI 分析标签页'].some((l) => allText(tree).includes(l)), null);
-  check('分组小标题（组件开关）', findByClass(tree, 'dst-group-title').length === 1,
-    findByClass(tree, 'dst-group-title').length);
+  check('分组小标题（账户与现金 / 组件开关）',
+    findByClass(tree, 'dst-group-title').length >= 2
+    && allText(tree).includes('账户与现金')
+    && allText(tree).includes('组件开关'),
+    findByClass(tree, 'dst-group-title').map((n) => allText(n.kids)));
 
   // ---- 关掉 K 线图：图表区只剩分时，切换按钮也一起消失 ----
   check('关掉「K线图」', clickSettingToggle('K线图'));

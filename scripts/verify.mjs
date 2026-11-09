@@ -195,6 +195,8 @@ section('路由注册');
 const ROUTE_LIST = [
   '/state', '/kline', '/trends', '/orderbook', '/search', '/trades', '/health',
   '/items/save', '/items/remove', '/settings/save',
+  '/accounts/save', '/accounts/remove', '/dividends/save', '/dividends/remove',
+  '/ipo/calendar',
   '/trades/save', '/trades/remove', '/trades/clear', '/trades/apply',
   '/alerts/save', '/alerts/remove', '/alerts/ack',
   '/ai/models', '/ai/analyze',
@@ -522,6 +524,76 @@ if (!OFFLINE) {
 
   // 清掉 items 里被 apply 写进去的持仓，避免影响后续断言
   await call(ctx, '/items/remove', { method: 'POST', body: { symbol: 'sz000001' } });
+}
+
+section('账户现金与分红（v2）');
+{
+  // 新库没有账户：总资产应当是 null（不能拿 0 冒充），且 hasCash=false
+  const s0 = await call(ctx, '/state');
+  check('没有账户时 summary.hasCash=false', s0.json.summary.hasCash === false, s0.json.summary.hasCash);
+  check('没有账户时总资产是 null 而不是 0', s0.json.summary.totalAssets === null, s0.json.summary.totalAssets);
+
+  const a1 = await call(ctx, '/accounts/save', { method: 'POST', body: { name: 'A股主账户', cash: 50000 } });
+  check('新增账户成功', a1.json.ok === true, a1.json);
+  const account = a1.json.account;
+  check('账户带 id / name / cash', !!account.id && account.name === 'A股主账户' && account.cash === 50000, account);
+  check('新增响应里 state 已带新账户',
+    Array.isArray(a1.json.state.accounts) && a1.json.state.accounts.length === 1, a1.json.state.accounts);
+
+  const sum = a1.json.state.summary;
+  check('总资产 = 现金 + 持仓市值',
+    Math.abs(sum.totalAssets - (sum.cash + sum.marketValue)) < 0.02,
+    { totalAssets: sum.totalAssets, cash: sum.cash, marketValue: sum.marketValue });
+  check('总投入 = 现金 + 持仓成本',
+    Math.abs(sum.totalInvested - (sum.cash + sum.costValue)) < 0.02,
+    { totalInvested: sum.totalInvested, cash: sum.cash, costValue: sum.costValue });
+  check('当日涨跌幅有值或为 null（缺昨收时不硬凑）',
+    sum.dayPct === null || typeof sum.dayPct === 'number', sum.dayPct);
+
+  const a2 = await call(ctx, '/accounts/save', { method: 'POST', body: { id: account.id, cash: 62000 } });
+  check('改现金生效且不新增账户', a2.json.account.cash === 62000
+    && a2.json.state.accounts.length === 1, a2.json.state.accounts);
+  const neg = await call(ctx, '/accounts/save', { method: 'POST', body: { id: account.id, cash: -5 } });
+  check('负数现金被夹到 0', neg.json.account.cash === 0, neg.json.account.cash);
+  await call(ctx, '/accounts/save', { method: 'POST', body: { id: account.id, cash: 50000 } });
+
+  // 分红：金额自动算 / 手填优先 / 删除
+  const d1 = await call(ctx, '/dividends/save', {
+    method: 'POST',
+    body: { symbol: 'sh600519', perShare10: 21, shares: 100 },
+  });
+  check('记分红成功', d1.json.ok === true, d1.json);
+  check('金额按 每10股派息/10×股数 自动算', d1.json.dividend.amount === 210, d1.json.dividend.amount);
+  check('summary 分红笔数与金额同步',
+    d1.json.state.summary.dividends.count === 1 && d1.json.state.summary.dividends.amount === 210,
+    d1.json.state.summary.dividends);
+
+  const d2 = await call(ctx, '/dividends/save', {
+    method: 'POST',
+    body: { symbol: 'sh600519', amount: 500, note: '手填到账金额' },
+  });
+  check('手填金额优先于自动计算', d2.json.dividend.amount === 500, d2.json.dividend.amount);
+  check('分红合计累加', d2.json.state.summary.dividends.amount === 710, d2.json.state.summary.dividends.amount);
+  check('分红不影响浮动盈亏',
+    d2.json.state.summary.pnl === d1.json.state.summary.pnl,
+    { before: d1.json.state.summary.pnl, after: d2.json.state.summary.pnl });
+
+  const badAmount = await call(ctx, '/dividends/save', { method: 'POST', body: { symbol: 'sh600519' } });
+  check('没有金额时给中文错误', badAmount.json.ok === false && /金额/.test(badAmount.json.error || ''), badAmount.json);
+
+  const d3 = await call(ctx, '/dividends/remove', { method: 'POST', body: { id: d1.json.dividend.id } });
+  check('删除分红成功', d3.json.ok === true && d3.json.removed === true, d3.json);
+
+  const loose = await call(ctx, '/dividends/save', {
+    method: 'POST',
+    body: { input: '600519', perShare10: 10, shares: 100 },
+  });
+  check('允许用「代码/名称」手填标的', loose.json.ok === true && !!loose.json.dividend.symbol, loose.json.error || loose.json.dividend);
+
+  const rmAccount = await call(ctx, '/accounts/remove', { method: 'POST', body: { id: account.id } });
+  check('删除账户成功', rmAccount.json.ok === true && rmAccount.json.removed === true, rmAccount.json);
+  check('删完账户总资产回到 null', rmAccount.json.state.summary.totalAssets === null,
+    rmAccount.json.state.summary.totalAssets);
 }
 
 section('价格预警 /alerts');
