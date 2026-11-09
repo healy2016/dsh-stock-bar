@@ -1003,7 +1003,7 @@ section('面板常展开（侧边栏版无需点击开面板）');
   check('面板文案含持仓只数（竖排导航底部）', /只持仓/.test(allText(tree)), null);
 }
 
-section('首页指数卡片（点卡片出图表，指数无成本线/盘口/复权）');
+section('首页指数卡片（默认选中上证直接出图；点卡片收起/展开，指数无成本线/盘口/复权）');
 {
   const clickRail = (label) => {
     const b = collect(tree).filter((n) => n.tag === 'button').find((x) => allText(x.kids).includes(label));
@@ -1015,13 +1015,15 @@ section('首页指数卡片（点卡片出图表，指数无成本线/盘口/复
   const cards = findByClass(tree, 'dst-idx');
   check('首页 8 张指数卡片', cards.length === 8, cards.length);
 
-  const reqsBefore = fetchLog.length;
-  cards[0].props.onClick({ preventDefault() {}, stopPropagation() {} });
-  await settle(14);
-  check('点卡片拉了分时', fetchLog.slice(reqsBefore).some((u) => u.includes('/trends')),
-    fetchLog.slice(reqsBefore).slice(0, 4));
+  // 默认选中上证指数：详情区直接渲染，不用点卡片
   const title = findByClass(tree, 'dst-kline-title')[0];
-  check('详情区展开且标题是上证指数', !!title && /上证指数/.test(allText(title.kids)), null);
+  check('默认选中上证指数：详情区已展开', !!title && /上证指数/.test(allText(title.kids)), null);
+  check('默认渲染了分时', fetchLog.some((u) => u.includes('/trends')),
+    fetchLog.filter((u) => u.includes('/trends')).slice(0, 2));
+  check('上证卡片处于高亮态',
+    findByClass(tree, 'dst-idx').some((n) => /dst-on/.test(String((n.props && n.props.className) || ''))
+      && /上证指数/.test(allText(n))),
+    null);
   check('指数详情没有成本线', findByClass(tree, 'dst-cost-line').length === 0,
     findByClass(tree, 'dst-cost-line').length);
   check('指数详情没有五档盘口', findByClass(tree, 'dst-book').length === 0,
@@ -1033,19 +1035,27 @@ section('首页指数卡片（点卡片出图表，指数无成本线/盘口/复
   check('有「K线」切换按钮', !!klineBtn, null);
   if (klineBtn) klineBtn.props.onClick({});
   await settle(12);
-  check('K线请求发出', fetchLog.slice(reqsBefore).some((u) => u.includes('/kline')),
+  // K 线在选中时已预取（SymbolDetail 挂载即拉），这里断言上证的 K 线已请求即可
+  check('上证指数的 K 线已请求',
+    fetchLog.some((u) => /kline\?symbol=sh000001/.test(u)),
     fetchLog.filter((u) => u.includes('/kline')).slice(-1));
 
-  // 再点一次卡片收起详情
+  // 点卡片收起详情，再点展开（切换式选中）
+  cards[0].props.onClick({ preventDefault() {}, stopPropagation() {} });
+  await settle(10);
+  check('点卡片收起详情', findByClass(tree, 'dst-kline-title').length === 0,
+    findByClass(tree, 'dst-kline-title').length);
   const cards2 = findByClass(tree, 'dst-idx');
   if (cards2.length) cards2[0].props.onClick({ preventDefault() {}, stopPropagation() {} });
-  await settle(10);
-  check('再点卡片收起详情', findByClass(tree, 'dst-kline-title').length === 0,
-    findByClass(tree, 'dst-kline-title').length);
+  await settle(12);
+  const title2 = findByClass(tree, 'dst-kline-title')[0];
+  check('再点卡片展开详情（仍是上证指数）', !!title2 && /上证指数/.test(allText(title2.kids)), null);
 
-  // 后续用例从持仓表格开始：切回「持仓」
+  // 后续用例从持仓表格开始：切回「持仓」（选中的是指数，持仓表格不应冒出指数图表）
   check('切回持仓', clickRail('持仓'));
   await settle(8);
+  check('持仓表格下没有指数的图表详情', findByClass(tree, 'dst-kline-title').length === 0,
+    findByClass(tree, 'dst-kline-title').length);
 }
 
 section('持仓表格');
