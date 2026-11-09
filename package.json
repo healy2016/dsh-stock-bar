@@ -21,15 +21,15 @@
     "candlestick",
     "portfolio"
   ],
-  "author": "NoCandles",
+  "author": "healy2016",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/NoCandles/dsh-stock-bar.git"
+    "url": "git+https://github.com/healy2016/dsh-stock-bar.git"
   },
-  "homepage": "https://github.com/NoCandles/dsh-stock-bar#readme",
+  "homepage": "https://github.com/healy2016/dsh-stock-bar#readme",
   "bugs": {
-    "url": "https://github.com/NoCandles/dsh-stock-bar/issues"
+    "url": "https://github.com/healy2016/dsh-stock-bar/issues"
   },
   "main": "./lib/index.js",
   "icon": "./icon.svg",

@@ -182,5 +182,5 @@ node scripts/peek-pack.mjs sh600519 short
 `cordis.patch.yml`，并带 [`dsh-plugin`](https://github.com/topics/dsh-plugin) 话题。
 
 待提交的条目已经写好：[`contrib/awesome-dsh-plugin.yml`](contrib/awesome-dsh-plugin.yml)，
-对应目标是 `data/plugins/NoCandles__dsh-stock-bar.yml`（该列表一个插件一个 YAML 文件，README 由脚本生成）。
+对应目标是 `data/plugins/healy2016__dsh-stock-bar.yml`（该列表一个插件一个 YAML 文件，README 由脚本生成）。
 

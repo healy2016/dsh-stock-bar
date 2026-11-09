@@ -2,8 +2,8 @@
 
 [中文](README.md) · **English**
 
-[![release](https://img.shields.io/github/v/release/NoCandles/dsh-stock-bar?color=2fd08a)](https://github.com/NoCandles/dsh-stock-bar/releases)
-[![license](https://img.shields.io/github/license/NoCandles/dsh-stock-bar?color=6b5ce7)](LICENSE)
+[![release](https://img.shields.io/github/v/release/healy2016/dsh-stock-bar?color=2fd08a)](https://github.com/healy2016/dsh-stock-bar/releases)
+[![license](https://img.shields.io/github/license/healy2016/dsh-stock-bar?color=6b5ce7)](LICENSE)
 
 A stock ticker strip pinned to the top of the DSH window: quotes, holdings, charts, AI review.
 
@@ -25,7 +25,7 @@ A stock ticker strip pinned to the top of the DSH window: quotes, holdings, char
 Or install from this repo:
 
 ```bash
-dsh plugin --profile desktop add github:NoCandles/dsh-stock-bar
+dsh plugin --profile desktop add github:healy2016/dsh-stock-bar
 ```
 
 Then add `dsh-stock-bar` to `dsh.profile.bundles` in `<profile>/package.json` (`dsh plugin` only forwards args to pnpm and does not edit that field — a bundle that is not listed is never loaded), and **quit DSH completely and relaunch** — a page refresh is not enough.
