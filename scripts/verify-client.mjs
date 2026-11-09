@@ -863,15 +863,19 @@ check('只请求了 react / react-dom',
   && reactRequests.includes('react'),
   reactRequests);
 check('返回 { inject, apply }', mod && Array.isArray(mod.inject) && typeof mod.apply === 'function', mod && Object.keys(mod));
-check("inject 恰好是 ['slots']", JSON.stringify(mod.inject) === '["slots"]', mod.inject);
+check("inject 是 ['slots','sidebarRightTabs']（内置右栏）", JSON.stringify(mod.inject) === '["slots","sidebarRightTabs"]', mod.inject);
 check('factory 内没有副作用（未注入样式）', styleTags.length === 0, styleTags.length);
 
 const registrations = [];
 const effectLabels = [];
+const tabTypeDefs = [];
 let fakeCtx = {
   slots: {
     inject(ownerKey, cb) { effectLabels.push(['inject', ownerKey]); return cb(); },
     register(entry, component) { registrations.push({ entry, component }); return () => {}; },
+  },
+  sidebarRightTabs: {
+    register(def) { tabTypeDefs.push(def); return () => {}; },
   },
   effect(fn, label) { effectLabels.push(['effect', label]); const d = fn(); return d; },
 };
@@ -879,15 +883,30 @@ let fakeCtx = {
 let applyErr = null;
 try { mod.apply(fakeCtx); } catch (e) { applyErr = e; }
 check('apply(ctx) 不抛错', applyErr === null, applyErr && (applyErr.stack || applyErr.message));
-check('通过 ctx.slots.inject 声明槽位依赖', effectLabels.some(([k, v]) => k === 'inject' && v === 'shell.overlay'), effectLabels);
+check("通过 ctx.slots.inject 声明 'sidebar.right.pane.tab' 槽位",
+  effectLabels.some(([k, v]) => k === 'inject' && v === 'sidebar.right.pane.tab'), effectLabels);
 check('注册了 1 个槽位条目', registrations.length === 1, registrations.length);
 
 const reg = registrations[0];
-check("槽位名 = 'shell.overlay'（frame 级 overlay 座位）", reg && reg.entry.name === 'shell.overlay', reg && reg.entry.name);
-check("条目 id = 'stock-bar'", reg && reg.entry.id === 'stock-bar', reg && reg.entry.id);
-check('order 是数字', reg && typeof reg.entry.order === 'number', reg && reg.entry.order);
+check("槽位名 = 'sidebar.right.pane.tab'（内置右栏 body 座位）", reg && reg.entry.name === 'sidebar.right.pane.tab', reg && reg.entry.name);
+check("条目 key = 'dsh-stock-bar/board'", reg && reg.entry.key === 'dsh-stock-bar/board', reg && reg.entry.key);
 check('注册的是函数组件', reg && typeof reg.component === 'function', reg && typeof reg.component);
-const registered = { component: reg.component };
+check('声明了 1 个右栏 tab 类型', tabTypeDefs.length === 1, tabTypeDefs.length);
+const tabType = tabTypeDefs[0] || {};
+check("tab 类型 kind = 'stock-board'，keepMounted", tabType.kind === 'stock-board' && tabType.keepMounted === true, tabType);
+check('tab 标题是「持仓看板」', typeof tabType.title === 'function' && tabType.title() === '持仓看板', tabType.title && tabType.title());
+check('指南入口带标题/描述/图标',
+  Array.isArray(tabType.guide) && tabType.guide.length === 1
+    && typeof tabType.guide[0].title === 'function' && tabType.guide[0].title() === '持仓看板'
+    && typeof tabType.guide[0].description === 'function'
+    && typeof tabType.guide[0].icon === 'function',
+  tabType.guide);
+// body 组件走框架注入的 useTabInfo；测试桩补一个 visible=true 的读法
+const registered = {
+  component: (props) => reg.component({
+    useTabInfo: () => ({ tab: { visible: props && props.visible !== false } }),
+  }),
+};
 
 section('样式注入');
 check('样式写进了 document.head', styleTags.length === 1, styleTags.length);
@@ -911,26 +930,26 @@ tree = null;
 // 只跑一轮：这一轮里 effect 刚发出 fetch，数据还没回来 —— 这才是"加载中"那一帧
 await settle(1);
 check('组件渲染不抛错', tree !== null);
-check('渲染出 .dst-root', findByClass(tree, 'dst-root').length === 1, findByClass(tree, 'dst-root').length);
-check('渲染出 .dst-bar 顶栏', findByClass(tree, 'dst-bar').length === 1);
-check('加载中显示占位文案', /加载行情中/.test(allText(tree)), allText(tree).slice(0, 120));
+check('渲染出 .dst-side 侧边栏整页容器', findByClass(tree, 'dst-side').length === 1, findByClass(tree, 'dst-side').length);
+check('渲染出 .dst-side-head 标题行', findByClass(tree, 'dst-side-head').length === 1);
+check('加载中显示标题占位', /持仓看板/.test(allText(tree)), allText(tree).slice(0, 120));
 
 section('数据到位后渲染');
 // 让 usePortfolio 的 effect 跑完：再 settle 几轮
 await settle(12);
 const text = allText(tree);
 check('state 已拉取（/state 请求发出）', fetchLog.some((u) => u.includes('/api/stock-bar/state')), fetchLog.slice(0, 3));
-check('顶栏显示交易时段标签', /交易中/.test(text), text.slice(0, 200));
+check('头部显示交易时段标签', /交易中/.test(text), text.slice(0, 200));
 
-const chips = findByClass(tree, 'dst-chip');
-check('渲染出 4 个行情胶囊（2 指数 + 2 个股）', chips.length === 4, chips.length);
-check('胶囊里出现贵州茅台', /贵州茅台/.test(text), null);
-check('胶囊里出现价格 1680.5', /1,?680\.5/.test(text), null);
+const rows = collect(tree).filter((n) => n.tag === 'tr');
+check('渲染出持仓/自选表格行', rows.length >= 2, rows.length);
+check('表格里出现贵州茅台', /贵州茅台/.test(text), null);
+check('表格里出现价格 1680.5', /1,?680\.5/.test(text), null);
 
-const rootNode = findByClass(tree, 'dst-root')[0];
-check('顶栏钉在 Windows 标题栏下方（top=40px + 偏移 6px）',
-  rootNode && rootNode.props.style && /46px/.test(String(rootNode.props.style.top)),
-  rootNode && rootNode.props.style);
+const sideNode = findByClass(tree, 'dst-side')[0];
+check('侧边栏容器不再是 fixed 顶栏（无内联 top 定位）',
+  sideNode && (!sideNode.props.style || !/fixed/.test(String(sideNode.props.style.position || ''))),
+  sideNode && sideNode.props.style);
 
 section('涨跌语义色');
 {
@@ -954,16 +973,10 @@ section('持仓盈亏汇总徽标');
   check('徽标含盈亏金额', /\+?\d[\d,]*\.\d\d/.test(bt), bt.slice(0, 160));
 }
 
-section('点击展开面板');
+section('面板常展开（侧边栏版无需点击开面板）');
 {
-  const brand = findByClass(tree, 'dst-brand').find((n) => n.props && typeof n.props.onClick === 'function');
-  check('品牌区可点击', !!brand);
-  let clickErr = null;
-  try { brand.props.onClick({ preventDefault() {}, stopPropagation() {} }); } catch (e) { clickErr = e; }
-  check('点击不抛错', clickErr === null, clickErr && clickErr.message);
-  await settle(12);
-  const panel = findByClass(tree, 'dst-panel');
-  check('面板已展开', panel.length === 1, panel.length);
+  const body = findByClass(tree, 'dst-side-body');
+  check('正文区已在', body.length === 1, body.length);
   const tabs = findByClass(tree, 'dst-tab');
   check('面板有多个标签页', tabs.length >= 3, tabs.map((t) => allText(t.kids)));
   check('面板文案含持仓只数', /只持仓/.test(allText(tree)), null);
@@ -1138,7 +1151,7 @@ section('切换标签页 / 自选');
     try { idxBtn.props.onClick({ preventDefault() {}, stopPropagation() {} }); } catch (e) { err = e; }
     check('切标签不抛错', err === null, err && err.message);
     await settle(6);
-    check('切标签后仍能正常渲染', findByClass(tree, 'dst-bar').length === 1);
+    check('切标签后仍能正常渲染', findByClass(tree, 'dst-side').length === 1);
   }
 }
 
@@ -1285,7 +1298,7 @@ section('旧宿主不认新设置项时的提示');
     !!badge && allText(badge).includes('宿主待重启'), badge && allText(badge));
   check('设置项确实没被写进去（界面不会自己弹回去）',
     STATE.settings.showKline === before, `${before} -> ${STATE.settings.showKline}`);
-  check('这一下没有把整个界面搞崩', findByClass(tree, 'dst-root').length > 0, null);
+  check('这一下没有把整个界面搞崩', findByClass(tree, 'dst-side').length > 0, null);
   poke();
   await settle(10);
   check('宿主太旧时的提示不会被下一轮成功轮询擦掉',
@@ -1304,53 +1317,7 @@ section('旧宿主不认新设置项时的提示');
   await settle(10);
 }
 
-section('条内手动滚动（鼠标滚轮 / 拖动）');
-{
-  const trackNode = collect(tree).find((n) => n.tag === 'div' && n.props && n.props.className === 'dst-track');
-  const trk = trackNode && trackNode.props.ref ? trackNode.props.ref.current : null;
-  check('拿得到行情轨道元素', !!trk);
-  if (trk) {
-    trk.scrollWidth = 1800;
-    trk.clientWidth = 720;
-    trk.scrollLeft = 0;
-
-    const wheelHandlers = trk.__listeners.get('wheel') || [];
-    check('轨道注册了 wheel 监听', wheelHandlers.length >= 1, wheelHandlers.length);
-    check('wheel 监听不是 passive（否则拦不住页面滚动）',
-      wheelHandlers.length > 0 && wheelHandlers.every((l) => l.passive !== true),
-      wheelHandlers.map((l) => l.passive));
-
-    const e1 = dispatch(trk, 'wheel', { deltaY: 200 });
-    check('普通鼠标滚轮向下 = 条内向右滚', trk.scrollLeft === 200, `scrollLeft=${trk.scrollLeft}`);
-    check('轨道溢出时拦下页面滚动', e1._prevented === true, e1._prevented);
-
-    dispatch(trk, 'wheel', { deltaX: -120, deltaY: 0 });
-    check('横向滚轮优先于纵向', trk.scrollLeft === 80, `scrollLeft=${trk.scrollLeft}`);
-
-    trk.scrollLeft = 0;
-    trk.scrollWidth = 720;
-    const e3 = dispatch(trk, 'wheel', { deltaY: 200 });
-    check('没溢出就不抢滚轮', e3._prevented === false && trk.scrollLeft === 0,
-      { prevented: e3._prevented, scrollLeft: trk.scrollLeft });
-
-    trk.scrollWidth = 1800;
-    trk.scrollLeft = 0;
-    dispatch(trk, 'mousedown', { button: 0, clientX: 500 });
-    dispatchWindow('mousemove', { clientX: 420 });
-    const dragged = trk.scrollLeft;
-    dispatchWindow('mouseup', {});
-    check('按住往左拖 = 条内内容跟着走', dragged === 80, `scrollLeft=${dragged}`);
-
-    const clickAfterDrag = dispatch(trk, 'click', {});
-    check('拖动之后的 click 被吞掉（不会误选中）', clickAfterDrag._prevented === true, clickAfterDrag._prevented);
-    const clickNoDrag = dispatch(trk, 'click', {});
-    check('没拖动时 click 正常放行', clickNoDrag._prevented === false, clickNoDrag._prevented);
-
-    dispatchWindow('mousemove', { clientX: 100 });
-    check('松手后拖动监听已解绑', trk.scrollLeft === 80, `scrollLeft=${trk.scrollLeft}`);
-    await settle(4);
-  }
-}
+// 顶栏跑马灯轨道（.dst-track）随顶栏一并移除，滚轮/拖动测试不再适用，整节跳过。
 
 section('再点一次收起详情');
 {
@@ -1530,11 +1497,18 @@ section('AI 分析');
     findByClass(tree, 'dst-ai-bodyfold').length);
   check('展开状态写回设置', STATE.settings.aiCollapsed === false, STATE.settings.aiCollapsed);
 
-  // —— 切换自选后自动清空上一只的分析 ——
-  const pinganChip = findByClass(tree, 'dst-chip').find((n) => /平安银行/.test(allText(n)));
-  check('顶栏有另一只可切换的标的', !!pinganChip, null);
-  pinganChip.props.onClick({ preventDefault() {}, stopPropagation() {} });
+  // —— 切换标的后自动清空上一只的分析 ——
+  // 顶栏胶囊已移除：先在持仓表格里点平安银行那行，再切回 AI 分析标签
+  check('先切到持仓标签', clickText('持仓'));
+  await settle(10);
+  const pinganRow = collect(tree).filter((n) => n.tag === 'tr').find(
+    (n) => /平安银行/.test(allText(n)) && typeof n.props.onClick === 'function',
+  );
+  check('表格里有另一只可切换的标的（平安银行）', !!pinganRow, null);
+  if (pinganRow) pinganRow.props.onClick({ preventDefault() {}, stopPropagation() {} });
   await settle(16);
+  check('切到 AI 分析标签', clickText('AI 分析'));
+  await settle(10);
   check('切换标的后分析面板自动清空', findByClass(tree, 'dst-ai-out').length === 0,
     findByClass(tree, 'dst-ai-out').length);
   check('切换标的后回到空态文案', /让模型做一次复盘/.test(allText(tree)), null);
@@ -1716,46 +1690,7 @@ section('组件开关（设置 → 显示）');
     btnTexts().includes('K线') && btnTexts().includes('分时') && btnTexts().includes('周K'), null);
 }
 
-section('折叠态');
-{
-  const btns = collect(tree).filter((n) => n.tag === 'button');
-  const collapse = btns.find((b) => (b.props.title || '').includes('折叠'));
-  check('存在折叠按钮', !!collapse);
-  if (collapse) {
-    let err = null;
-    try { collapse.props.onClick({ preventDefault() {}, stopPropagation() {} }); } catch (e) { err = e; }
-    check('折叠不抛错', err === null, err && err.message);
-    await settle(8);
-    check('折叠态不再渲染完整顶栏', findByClass(tree, 'dst-bar').length === 0, findByClass(tree, 'dst-bar').length);
-    // 折叠胶囊改用 .dst-dock：它现在是共享顶栏停靠栈 #dsh-topbar-dock 里的一个 flex 项，
-    // 位置由队列 + order 决定（不再自己算 top/right 去抢坐标）
-    const dockEls = findByClass(tree, 'dst-dock');
-    check('折叠态仍渲染小胶囊', dockEls.length >= 1, dockEls.length);
-    const dockStyle = (dockEls[0] && dockEls[0].props && dockEls[0].props.style) || {};
-    check('胶囊不再自己钉坐标（不写 top/right/bottom/left，交给停靠栈）',
-      dockStyle.top === undefined && dockStyle.right === undefined
-      && dockStyle.bottom === undefined && dockStyle.left === undefined,
-      dockStyle);
-    check('胶囊标了 no-drag 的样式类（标题栏是拖拽区，不然点不动）',
-      /\.dst-dock\{[^}]*-webkit-app-region:no-drag/.test(source), null);
-    check('胶囊默认半透明（不用它时几乎看不见）',
-      /\.dst-dock\{[^}]*opacity:\.55/.test(source) && /\.dst-dock:hover[^{]*\{[^}]*opacity:1/.test(source), null);
-    // 注册进共享顶栏停靠栈：容器 id 约定 + portal + order 排队 + 引用计数释放
-    const flat = source.replace(/\s+/g, ' ');
-    check('折叠胶囊走 createPortal 注册进共享顶栏停靠栈',
-      source.includes("const TOPBAR_DOCK_ID = 'dsh-topbar-dock'")
-      && source.includes('createPortal')
-      && /h\(TopbarSlot, null, h\('div', \{ className: 'dst-dock'/.test(flat), null);
-    check('胶囊靠 order 排队（与「每日一关」共用一条队列，不会重叠）',
-      /\.dst-dock\{[^}]*order:40/.test(source.replace(/\s+/g, ' ')), null);
-    check('容器自己不吃点击、只让子项吃',
-      /#dsh-topbar-dock\{[^}]*pointer-events:none/.test(source.replace(/\s+/g, ' '))
-      && /#dsh-topbar-dock > \*\{pointer-events:auto\}/.test(source.replace(/\s+/g, ' ')), null);
-    check('容器有引用计数，卸载后不留垃圾节点',
-      source.includes('acquireTopbarDock') && source.includes('releaseTopbarDock')
-      && source.includes('__dshTopbarCount'), null);
-  }
-}
+// 折叠态/顶栏胶囊随顶栏一并移除（侧边栏版不存在折叠概念），整节跳过。
 
 section('卸载清理');
 {
@@ -1768,100 +1703,78 @@ section('卸载清理');
 }
 
 /* ============================================================
- * dsh-better-sidebar 侧边栏接入（可选插件）
+ * 内置右栏接入（sidebarRightTabs 契约）
  * ============================================================ */
 
-section('侧边栏接入契约（静态）');
+section('右栏接入契约（静态）');
 {
-  check('注册 tab 走 ctx.inject 软依赖（没装不挂起）',
-    /ctx\.inject\(\['betterSidebar'\]/.test(code), null);
-  check('tab 注册包在 ctx.effect 里（HMR/禁用后可回收）',
-    /ctx\.effect\(\(\) => \{[\s\S]*?ctx\.inject\(\['betterSidebar'\]/.test(code), null);
-  check('registerTab 在 owner.effect 里注册',
-    /owner\.effect\(/.test(code) && /service\.registerTab\(/.test(code), null);
-  check("tab id 带插件前缀 dsh-stock-bar:portfolio",
-    /SIDEBAR_TAB_ID = 'dsh-stock-bar:portfolio'/.test(code), null);
-  check('没有以 value 形式引入 dsh-better-sidebar',
-    !/require\(['"]dsh-better-sidebar/.test(code) && !/from ['"]dsh-better-sidebar/.test(code), null);
-  check('静态 inject 仍只有 slots（不把可选插件写死）',
-    JSON.stringify(mod.inject) === '["slots"]', mod.inject);
+  check('tab 类型走 ctx.sidebarRightTabs.register',
+    /ctx\.sidebarRightTabs\.register\(/.test(code), null);
+  check('body 挂进 sidebar.right.pane.tab 键控槽位',
+    /slots\.inject\('sidebar\.right\.pane\.tab'/.test(code), null);
+  check("tab id 带插件前缀 dsh-stock-bar/board",
+    /BOARD_ID = 'dsh-stock-bar\/board'/.test(code), null);
+  check('body 用框架注入的 useTabInfo 读 visible（收起即暂停轮询）',
+    /useTabInfo\(\)/.test(code) && /tab\.visible/.test(code), null);
+  check('声明依赖 sidebarRightTabs 服务',
+    JSON.stringify(mod.inject) === '["slots","sidebarRightTabs"]', mod.inject);
 }
 
-section('侧边栏 tab 注册（模拟装好 dsh-better-sidebar）');
+section('右栏 tab 注册（模拟带 sidebarRightTabs 的宿主）');
 const sideTabs = [];
 const sideEffectLabels = [];
-const sideCleanups = [];
-const sideService = {
-  registerTab(desc) {
-    sideTabs.push(desc);
-    return () => { sideCleanups.push(desc.id); };
-  },
-};
-let sideSeatDisposed = false;
-const sideEffectCleanups = [];
+const sideRegistrations = [];
+const sideDisposers = [];
+let sideTabDisposed = false;
+let sideSlotDisposed = false;
 const sideCtx = {
   slots: {
-    inject(ownerKey, cb) { return cb(); },
-    register() { return () => {}; },
+    inject(ownerKey, cb) { sideEffectLabels.push(['inject', ownerKey]); return cb(); },
+    register(entry, component) { sideRegistrations.push({ entry, component }); return () => { sideSlotDisposed = true; }; },
+  },
+  sidebarRightTabs: {
+    register(def) { sideTabs.push(def); return () => { sideTabDisposed = true; }; },
   },
   effect(fn, label) {
     sideEffectLabels.push(label);
     const d = fn();
-    if (typeof d === 'function') sideEffectCleanups.push(d);
+    if (typeof d === 'function') sideDisposers.push(d);
     return d;
-  },
-  inject(deps, cb) {
-    sideEffectLabels.push('ctx.inject:' + deps.join(','));
-    const owner = {
-      betterSidebar: sideService,
-      get(name) { return name === 'betterSidebar' ? sideService : undefined; },
-      effect(fn, label) {
-        sideEffectLabels.push(label);
-        const d = fn();
-        if (typeof d === 'function') sideEffectCleanups.push(d);
-        return d;
-      },
-    };
-    cb(owner);
-    return { dispose() { sideSeatDisposed = true; } };
   },
 };
 let sideApplyErr = null;
 try { mod.apply(sideCtx); } catch (e) { sideApplyErr = e; }
-check('apply 在有 betterSidebar 的环境下不抛错', sideApplyErr === null, sideApplyErr && sideApplyErr.stack);
-check('通过 ctx.inject 等待 betterSidebar 服务',
-  sideEffectLabels.includes('ctx.inject:betterSidebar'), sideEffectLabels);
-check('注册了 1 个侧边栏 tab', sideTabs.length === 1, sideTabs.length);
+check('apply 在有 sidebarRightTabs 的环境下不抛错', sideApplyErr === null, sideApplyErr && sideApplyErr.stack);
+check("通过 slots.inject 声明 'sidebar.right.pane.tab' 座位",
+  sideEffectLabels.some(([k, v]) => k === 'inject' && v === 'sidebar.right.pane.tab'), sideEffectLabels);
+check('注册了 1 个右栏 tab 类型', sideTabs.length === 1, sideTabs.length);
 const tabDef = sideTabs[0] || {};
-check('tab id = dsh-stock-bar:portfolio', tabDef.id === 'dsh-stock-bar:portfolio', tabDef.id);
-check('tab 标题是中文「股票」', tabDef.title === '股票', tabDef.title);
-check('tab 有描述（菜单里能看懂）',
-  typeof tabDef.description === 'string' && tabDef.description.length > 6, tabDef.description);
-check('tab order 是数字', typeof tabDef.order === 'number', tabDef.order);
-check('tab 单实例（single 复用）', tabDef.single === true, tabDef.single);
-check('tab 组件是函数', typeof tabDef.component === 'function', typeof tabDef.component);
-check('tab 图标是函数且能画出 svg', typeof tabDef.icon === 'function' && (() => {
-  try { const el = tabDef.icon(14); return !!el && el.type === 'svg'; } catch { return false; }
+check('tab id = dsh-stock-bar/board', tabDef.id === 'dsh-stock-bar/board', tabDef.id);
+check('tab kind = stock-board', tabDef.kind === 'stock-board', tabDef.kind);
+check('keepMounted（切走后保留 body）', tabDef.keepMounted === true, tabDef.keepMounted);
+check('tab 标题函数返回「持仓看板」',
+  typeof tabDef.title === 'function' && tabDef.title('') === '持仓看板', tabDef.title && tabDef.title(''));
+check('指南入口有标题/描述/图标',
+  Array.isArray(tabDef.guide) && tabDef.guide.length === 1
+    && typeof tabDef.guide[0].title === 'function' && tabDef.guide[0].title() === '持仓看板'
+    && typeof tabDef.guide[0].description === 'function',
+  tabDef.guide);
+check('tab 图标是函数且能画出 svg', typeof tabDef.guide[0].icon === 'function' && (() => {
+  try { const el = tabDef.guide[0].icon({ size: 14 }); return !!el && el.type === 'svg'; } catch { return false; }
 })(), null);
-check('tab 注册和座位都在 effect 里（可释放）',
-  sideEffectLabels.includes('dsh-stock-bar/sidebar-tab') && sideEffectLabels.includes('dsh-stock-bar/sidebar'),
+check('注册和座位都在 effect 里（可释放）',
+  sideEffectLabels.includes('dsh-stock-bar/board-type') && sideEffectLabels.includes('dsh-stock-bar/board-body'),
   sideEffectLabels);
 
-// 模拟没装 better-sidebar：apply 不能要求这个服务，也不能抛错
-let bareApplyErr = null;
-try {
-  mod.apply({
-    slots: { inject(k, cb) { return cb(); }, register() { return () => {}; } },
-    effect(fn) { return fn(); },
-  });
-} catch (e) { bareApplyErr = e; }
-check('没装 dsh-better-sidebar 时 apply 不抛错（顶栏照旧）',
-  bareApplyErr === null, bareApplyErr && bareApplyErr.message);
-check('没装时不会多注册 tab', sideTabs.length === 1, sideTabs.length);
-
-section('侧边栏页渲染（visible=false 暂停，visible=true 复用面板）');
+section('右栏 body 渲染（visible=false 暂停，visible=true 复用面板）');
 {
-  const page = tabDef.component;
+  // body 组件：框架注入 useTabInfo；这里用它驱动 visible
+  const body = sideRegistrations[0] && sideRegistrations[0].component;
+  check('body 组件已注册', typeof body === 'function', typeof body);
+  const page = (visible) => ({
+    __el: true, type: body,
+    props: { useTabInfo: () => ({ tab: { visible } }) },
+  });
 
   // settle() 只会渲染顶栏那个 registered.component，这里单独渲染侧边栏页。
   async function settleNode(node, key, maxPass) {
@@ -1884,7 +1797,7 @@ section('侧边栏页渲染（visible=false 暂停，visible=true 复用面板�
   // 1) 不可见：不拉数据、不起轮询，也不能渲染成 fixed 顶栏
   const reqsBefore = fetchLog.length;
   const pollBefore = liveIntervals.size;
-  tree = await settleNode({ __el: true, type: page, props: { visible: false } }, 'sideHidden', 8);
+  tree = await settleNode(page(false), 'sideHidden', 8);
   const stateReqs = fetchLog.slice(reqsBefore).filter((u) => u.includes('/api/stock-bar/state'));
   check('不可见时不拉 /state', stateReqs.length === 0, stateReqs);
   check('不可见时不起轮询定时器',
@@ -1900,7 +1813,7 @@ section('侧边栏页渲染（visible=false 暂停，visible=true 复用面板�
   const reqs2 = fetchLog.length;
   const poll2 = liveIntervals.size;
   const drawsBefore = drawCalls;
-  tree = await settleNode({ __el: true, type: page, props: { visible: true } }, 'sideVisible', 24);
+  tree = await settleNode(page(true), 'sideVisible', 24);
   const urls = fetchLog.slice(reqs2);
   check('可见时拉 /state', urls.some((u) => u.includes('/api/stock-bar/state')), urls.slice(0, 3));
   check('可见时起了行情轮询', liveIntervals.size > poll2, { before: poll2, after: liveIntervals.size });
@@ -1914,23 +1827,23 @@ section('侧边栏页渲染（visible=false 暂停，visible=true 复用面板�
   check('侧边栏页表格行可点击', trs.length > 0, trs.length);
   if (trs.length) {
     trs[0].props.onClick({ preventDefault() {}, stopPropagation() {} });
-    tree = await settleNode({ __el: true, type: page, props: { visible: true } }, 'sideVisible', 18);
+    tree = await settleNode(page(true), 'sideVisible', 18);
     check('侧边栏页选中后拉分时',
       fetchLog.slice(reqs2).some((u) => u.includes('/trends')),
       fetchLog.filter((u) => u.includes('/trends')).slice(-1));
     check('侧边栏页画出了图', drawCalls > drawsBefore, { before: drawsBefore, after: drawCalls });
   }
   check('侧边栏页能切到「自选」标签', clickText('自选'), null);
-  tree = await settleNode({ __el: true, type: page, props: { visible: true } }, 'sideVisible', 14);
+  tree = await settleNode(page(true), 'sideVisible', 14);
   check('切标签后侧边栏页仍完整',
     findByClass(tree, 'dst-side').length === 1 && findByClass(tree, 'dst-side-body').length === 1, null);
 
   // 3) 卸载：注册处返回的 disposer 和座位都要能释放
-  for (const c of sideEffectCleanups.slice().reverse()) {
+  for (const c of sideDisposers.slice().reverse()) {
     try { c(); } catch { /* 清理失败不影响判定 */ }
   }
-  check('卸载时释放 betterSidebar 座位（seat.dispose）', sideSeatDisposed === true, sideSeatDisposed);
-  check('卸载时调了 registerTab 的 disposer', sideCleanups.length >= 1, sideCleanups);
+  check('卸载时释放了 tab 类型注册', sideTabDisposed === true, sideTabDisposed);
+  check('卸载时释放了槽位注册', sideSlotDisposed === true, sideSlotDisposed);
 }
 
 /* ============================================================
