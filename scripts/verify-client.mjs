@@ -1657,9 +1657,11 @@ section('组件开关（设置 → 显示）');
   check('切到设置标签页', clickText('设置'));
   await settle(12);
   check('设置里出现组件开关',
-    ['持仓汇总', '分时图', 'K线图', '流水标签页', '预警标签页', 'AI 分析标签页']
+    ['持仓汇总', '分时图', 'K线图', '显示五档盘口', '预警弹窗提示']
       .every((l) => allText(tree).includes(l)), null);
-  check('两个分组小标题都在', findByClass(tree, 'dst-group-title').length === 2,
+  check('设置里没有已退役的标签页开关',
+    !['流水标签页', '预警标签页', 'AI 分析标签页'].some((l) => allText(tree).includes(l)), null);
+  check('分组小标题（组件开关）', findByClass(tree, 'dst-group-title').length === 1,
     findByClass(tree, 'dst-group-title').length);
 
   // ---- 关掉 K 线图：图表区只剩分时，切换按钮也一起消失 ----
@@ -1711,41 +1713,25 @@ section('组件开关（设置 → 显示）');
     /分时图和 K 线图都在「设置 → 显示」里关掉了/.test(allText(tree)), null);
   check('都关掉时不再画图', !btnTexts().includes('周K') && !btnTexts().includes('3日'), null);
 
-  // ---- 关掉标签页 ----
+  // ---- 竖排 tab 固定 8 项：组件开关不再让导航移位 ----
   clickText('设置');
   await settle(10);
-  check('关掉「流水标签页」', clickSettingToggle('流水标签页'));
-  await settle(10);
-  check('关掉「AI 分析标签页」', clickSettingToggle('AI 分析标签页'));
+  const railCountBefore = findByClass(tree, 'dst-rail-item').length;
+  check('关掉「分时图」组件开关', clickSettingToggle('分时图'));
   await settle(12);
+  const railCountAfter = findByClass(tree, 'dst-rail-item').length;
+  check('竖排导航固定 8 项，不随组件开关增减',
+    railCountBefore === 8 && railCountAfter === 8,
+    { before: railCountBefore, after: railCountAfter });
   // 竖排导航按钮文案带 emoji 前缀，用 includes 匹配
   const hasNav = (label) => btnTexts().some((t) => t.includes(label));
-  check('标签栏里没有流水了', !hasNav('流水'), btnTexts().join(','));
-  check('标签栏里没有 AI 分析了', !hasNav('AI 分析'), null);
-  check('添加/设置/持仓还在，用户不会把自己锁死',
-    hasNav('添加') && hasNav('设置'), null);
-
-  // ---- 当前标签页被关掉时自动退回 ----
-  check('把流水标签页打开', clickSettingToggle('流水标签页'));
-  await settle(12);
-  check('打开流水页', clickText('流水'));
-  await settle(10);
-  const onTab = (label) => collect(tree).some((n) => n.tag === 'button'
-    && allText(n).includes(label) && String(n.props.className).includes('dst-on'));
-  check('确实停在流水页', onTab('流水'), null);
-  // 模拟「在别处把这个标签页关了」：改数据 + 走一次轮询
-  STATE.settings.showTrades = false;
-  poke();
-  await settle(16);
-  check('当前标签页被关掉后自动退回一个还开着的',
-    !onTab('流水') && (onTab('首页') || onTab('持仓') || onTab('添加') || onTab('设置')), null);
+  check('固定导航含 首页/持仓/自选/AI 分析/流水/预警/设置',
+    hasNav('首页') && hasNav('持仓') && hasNav('自选') && hasNav('AI 分析')
+      && hasNav('流水') && hasNav('预警') && hasNav('设置'), null);
 
   // ---- 恢复默认，后面的用例还要用 ----
   STATE.settings.showTrend = true;
   STATE.settings.showKline = true;
-  STATE.settings.showTrades = true;
-  STATE.settings.showAlerts = true;
-  STATE.settings.showAi = true;
   STATE.settings.showTotals = true;
   poke();
   await settle(16);
@@ -1853,9 +1839,11 @@ section('全局面板渲染（挂载即轮询；卸载由外壳负责）');
   check('面板挂载后起行情轮询', liveIntervals.size > poll2, { before: poll2, after: liveIntervals.size });
   check('渲染整页容器 .dst-side',
     findByClass(tree, 'dst-side').length === 1, findByClass(tree, 'dst-side').length);
-  check('内容区有限宽包装（不至于拉满整个主栏）',
-    collect(tree).some((n) => n.props && n.props.style && /900px/.test(String(n.props.style.maxWidth || ''))),
+  check('面板充满主栏（无内联限宽，同「上下文洞察」）',
+    !collect(tree).some((n) => n.props && n.props.style && /maxWidth/.test(String(Object.keys(n.props.style)))),
     null);
+  check('竖排导航固定 8 项', findByClass(tree, 'dst-rail-item').length === 8,
+    findByClass(tree, 'dst-rail-item').length);
   check('面板复用竖排导航（首页/持仓/自选…）',
     findByClass(tree, 'dst-rail-item').length >= 5
       && /首页/.test(allText(tree)) && /持仓/.test(allText(tree)) && /自选/.test(allText(tree)),
