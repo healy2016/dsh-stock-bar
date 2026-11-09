@@ -336,6 +336,30 @@ section('GET /state 参数');
   check('响应头 no-store', r.headers && r.headers['Cache-Control'] === 'no-store', r.headers);
 }
 
+section('宿主重启后第一帧先给磁盘快照');
+{
+  // 用同一个 store 目录再 apply 一次，模拟"宿主重启"：行情缓存全空，只剩磁盘上的快照
+  const ctx2 = makeCtx();
+  apply(ctx2, { storePath });
+  const first = await call(ctx2, '/state');
+  check('重启后第一次 /state 直接返回快照', first.json.cached === true, first.json.cached);
+  check('快照带回 items / summary / settings',
+    Array.isArray(first.json.items) && !!first.json.summary && !!first.json.settings, null);
+  check('快照不重放一次性提醒', Array.isArray(first.json.fired) && first.json.fired.length === 0, first.json.fired);
+  check('快照标记行情已过期', first.json.quotesStale === true, first.json.quotesStale);
+
+  // 后台会把真行情补上；补上之后第二次请求就不再是 cached
+  await new Promise((r) => setTimeout(r, 1200));
+  const second = await call(ctx2, '/state');
+  check('第二次 /state 仍是 ok', second.json.ok === true, second.json.ok);
+  if (!OFFLINE) {
+    check('预热完成后不再返回快照（缓存标记消失）', second.json.cached !== true, second.json.cached);
+    check('预热后行情时间戳是新的', typeof second.json.serverTime === 'number'
+      && Date.now() - second.json.serverTime < 60_000, second.json.serverTime);
+  }
+  for (const e of ctx2.effects) { try { e.disposer && e.disposer(); } catch { /* 清理失败不影响断言 */ } }
+}
+
 if (!OFFLINE) {
   section('GET /kline');
   {

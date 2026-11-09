@@ -1107,6 +1107,20 @@ section('面板常展开（侧边栏版无需点击开面板）');
   check('面板文案含持仓只数（竖排导航底部）', /只持仓/.test(allText(tree)), null);
 }
 
+section('本地快照缓存（刷新页面 / 重启宿主后秒开）');
+{
+  const raw = localStorageMap.get('dsh-stock-bar/state-cache.v1');
+  check('成功拿到 /state 后落进 localStorage', !!raw, !!raw);
+  const parsed = raw ? JSON.parse(raw) : null;
+  check('快照带时间戳', !!parsed && typeof parsed.at === 'number' && Date.now() - parsed.at < 60_000,
+    parsed && parsed.at);
+  check('快照里是完整 state（items + summary + settings）',
+    !!parsed && parsed.data && Array.isArray(parsed.data.items)
+    && !!parsed.data.summary && !!parsed.data.settings, parsed && Object.keys(parsed.data || {}));
+  check('快照不缓存一次性提醒（避免重放弹窗）',
+    !!parsed && Array.isArray(parsed.data.fired) && parsed.data.fired.length === 0, null);
+}
+
 section('首页：持仓摘要置顶 / 指数详情默认收起 / 点卡展开收起');
 {
   const clickRail = (label) => {
@@ -1670,7 +1684,7 @@ section('再点一次收起详情');
 
 section('AI 分析');
 {
-  check('切到 AI 分析标签页', clickText('AI 分析'));
+  check('切到「分析」标签页', clickText('分析'));
   await settle(16);
   const selects = () => collect(tree).filter((n) => n.tag === 'select');
   const provSel = () => selects()[0] || null;
@@ -1704,7 +1718,9 @@ section('AI 分析');
     STATE.settings.aiProvider === 'qwen' && STATE.settings.aiModel === 'qwen3-max',
     `${STATE.settings.aiProvider}/${STATE.settings.aiModel}`);
   // 换回父级 deep，子级应该回到它自己的第一个
-  provSel().props.onChange({ target: { value: 'deep' } });
+  const provSelBack = provSel();
+  check('供应商下拉框仍在', !!provSelBack, null);
+  if (provSelBack) provSelBack.props.onChange({ target: { value: 'deep' } });
   await settle(10);
   check('换回来时模型子级跟着回到 deep 的模型',
     modelOpts().length === 2 && STATE.settings.aiProvider === 'deep',
@@ -1784,7 +1800,7 @@ section('AI 分析');
   // —— 切走标签再切回来，正文要还在（状态已提升到模块级单例）——
   check('切到「持仓」标签', clickText('持仓'));
   await settle(16);
-  check('切回「AI 分析」标签', clickText('AI 分析'));
+  check('切回「分析」标签', clickText('分析'));
   await settle(16);
   check('切回来正文还在', /量能温和，盘口买盘 814 手。/.test(allText(tree)), null);
   check('切回来按钮仍是「重新分析」', /重新分析/.test(allText(tree)), null);
@@ -1816,7 +1832,7 @@ section('AI 分析');
   check('表格里有另一只可切换的标的（平安银行）', !!pinganRow, null);
   if (pinganRow) pinganRow.props.onClick({ preventDefault() {}, stopPropagation() {} });
   await settle(16);
-  check('切到 AI 分析标签', clickText('AI 分析'));
+  check('切到「分析」标签', clickText('分析'));
   await settle(10);
   check('切换标的后分析面板自动清空', findByClass(tree, 'dst-ai-out').length === 0,
     findByClass(tree, 'dst-ai-out').length);
@@ -1971,8 +1987,8 @@ section('组件开关（设置 → 显示）');
     { before: railCountBefore, after: railCountAfter });
   // 竖排导航按钮文案带 emoji 前缀，用 includes 匹配
   const hasNav = (label) => btnTexts().some((t) => t.includes(label));
-  check('固定导航含 首页/持仓/自选/AI 分析/流水/预警/设置',
-    hasNav('首页') && hasNav('持仓') && hasNav('自选') && hasNav('AI 分析')
+  check('固定导航含 首页/持仓/自选/流水/预警/分析/设置',
+    hasNav('首页') && hasNav('持仓') && hasNav('自选') && hasNav('分析')
       && hasNav('流水') && hasNav('预警') && hasNav('设置'), null);
 
   // ---- 恢复默认，后面的用例还要用 ----

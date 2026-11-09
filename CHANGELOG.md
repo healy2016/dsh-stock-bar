@@ -16,13 +16,24 @@
 
 ### 过渡与加载
 - 首屏**骨架屏**（摘要卡 + 8 张指数卡 + 图表占位）+ 淡入上浮，消除切页空白。
-- `/state` **快照缓存**：面板重新挂载时先用上一次数据渲染，不再「切回首页又白一下」。
 - K 线 / 分时数据未到时显示骨架占位，而不是空 div。
+- 修「大盘指数」分组标题被卡片压住：`.dst-sec` 原来带 `-4px` 负下边距，
+  网格的白底卡片会盖住标题下半截，改成正常间距（实测重叠 −4px → +2px 间隙）。
+
+### 打开更快：三层快照缓存
+- **内存**：`/state` 组装结果留一份，面板重新挂载先渲染它，新数据到了静默替换。
+- **localStorage**：每次成功响应落一份带时间戳的快照；刷新页面 / 重启 DSH 后
+  **打开看板立刻有数**，后台再刷新，不再等 1~2 秒的行情请求；12 小时以上的快照不复用。
+- **磁盘 `state-cache.json`**：宿主每 30 秒落一次；宿主重启后第一次 `/state`
+  直接回快照（`cached: true`），行情在后台预热，下一次轮询即为实时数据。
+- 面板挂载后 2 秒内不重复请求同一份数据。
 
 ### 存储与接口
 - `portfolio.json` 升到 `version: 2`，新增 `accounts`、`dividends`；旧文件读取时自动补默认值。
 - 新增 `POST /accounts/save`、`/accounts/remove`、`/dividends/save`、`/dividends/remove`，
   以及 `GET /ipo/calendar`；`/state` 增加 `summary`、`accounts`、`dividends`。
+- 新增 `scripts/preview-home.mjs`：抽出插件 CSS 拼一份首页 DOM，无头 Chrome 截图 + 量几何，
+  用来核对间距/遮挡这类纯样式问题（不需要启动 DSH）。
 
 ### 仓库迁移与北交所修复
 - 仓库地址全面迁移到个人仓库 `healy2016/dsh-stock-bar`：README 徽章与安装命令、
