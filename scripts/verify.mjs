@@ -228,7 +228,7 @@ section('GET /health');
   check('HTTP 200', r.status === 200, r.status);
   check('JSON ok', r.json && r.json.ok === true);
   check(`storePath 指向临时文件`, r.json.storePath === storePath, r.json.storePath);
-  check('首次启动已种入 3 条大盘指数', r.json.itemCount === 3, r.json.itemCount);
+  check('首次启动已种入 8 条大盘指数', r.json.itemCount === 8, r.json.itemCount);
   check('新库流水数为 0', r.json.tradeCount === 0, r.json.tradeCount);
   check('新库预警数为 0', r.json.alertCount === 0, r.json.alertCount);
   check('已实现盈亏初始为 0', r.json.realizedPnl === 0, r.json.realizedPnl);

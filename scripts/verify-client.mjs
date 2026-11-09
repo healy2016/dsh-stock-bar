@@ -76,6 +76,12 @@ const STATE = {
   strip: [
     mkItem({ symbol: SHANGHAI, code: '000001', name: '上证指数', index: true, price: 3210.55, prevClose: 3196.2 }),
     mkItem({ symbol: 'sz399001', code: '399001', name: '深证成指', index: true, price: 10120.3, prevClose: 10198.4 }),
+    mkItem({ symbol: 'sh000688', code: '000688', name: '科创50', index: true, price: 1261.95, prevClose: 1255.0 }),
+    mkItem({ symbol: 'sh000300', code: '000300', name: '沪深300', index: true, price: 4064.17, prevClose: 4076.0 }),
+    mkItem({ symbol: 'bj899050', code: '899050', name: '北证50', index: true, price: 902.83, prevClose: 915.2 }),
+    mkItem({ symbol: '124.HSTECH', code: 'HSTECH', name: '恒生科技', index: true, price: 4081.03, prevClose: 4054.0, currency: 'HKD' }),
+    mkItem({ symbol: '100.NDX', code: 'NDX', name: '纳斯达克', index: true, price: 24579.42, prevClose: 24315.0, currency: 'USD' }),
+    mkItem({ symbol: '100.SPX', code: 'SPX', name: '标普500', index: true, price: 7376.86, prevClose: 7354.0, currency: 'USD' }),
     mkItem({ symbol: MAOTAI, code: '600519', name: '贵州茅台', price: 1680.5, prevClose: 1665.0, shares: 100, cost: 1500 }),
     mkItem({ symbol: PINGAN, code: '000001', name: '平安银行', price: 9.85, prevClose: 10.12, shares: 2000, cost: 11.2 }),
   ],
@@ -926,14 +932,34 @@ await settle(1);
 check('组件渲染不抛错', tree !== null);
 check('渲染出 .dst-side 侧边栏整页容器', findByClass(tree, 'dst-side').length === 1, findByClass(tree, 'dst-side').length);
 check('渲染出 .dst-side-head 标题行', findByClass(tree, 'dst-side-head').length === 1);
+check('渲染出竖排导航 .dst-rail', findByClass(tree, 'dst-rail').length === 1, findByClass(tree, 'dst-rail').length);
 check('加载中显示标题占位', /持仓看板/.test(allText(tree)), allText(tree).slice(0, 120));
 
 section('数据到位后渲染');
 // 让 usePortfolio 的 effect 跑完：再 settle 几轮
 await settle(12);
-const text = allText(tree);
+let text = allText(tree);
 check('state 已拉取（/state 请求发出）', fetchLog.some((u) => u.includes('/api/stock-bar/state')), fetchLog.slice(0, 3));
 check('头部显示交易时段标签', /交易中/.test(text), text.slice(0, 200));
+
+// 默认停在首页：8 张指数卡片
+check('首页渲染 8 张指数卡片', findByClass(tree, 'dst-idx').length === 8, findByClass(tree, 'dst-idx').length);
+check('卡片含上证指数', /上证指数/.test(text), null);
+check('卡片含纳斯达克', /纳斯达克/.test(text), null);
+check('默认激活首页 tab', (() => {
+  const on = findByClass(tree, 'dst-rail-item').filter((n) => /dst-on/.test(String((n.props && n.props.className) || '')));
+  return on.length === 1 && /首页/.test(allText(on[0].kids));
+})(), null);
+
+// 后续用例都以持仓表格为起点：切到「持仓」标签（tab 状态跨 settle 保持）
+{
+  const holdingsBtn = collect(tree).filter((n) => n.tag === 'button')
+    .find((b) => /持仓/.test(allText(b.kids)));
+  check('竖排导航里有「持仓」按钮', !!holdingsBtn, null);
+  if (holdingsBtn) holdingsBtn.props.onClick({});
+  await settle(8);
+  text = allText(tree);
+}
 
 const rows = collect(tree).filter((n) => n.tag === 'tr');
 check('渲染出持仓/自选表格行', rows.length >= 2, rows.length);
@@ -971,9 +997,55 @@ section('面板常展开（侧边栏版无需点击开面板）');
 {
   const body = findByClass(tree, 'dst-side-body');
   check('正文区已在', body.length === 1, body.length);
-  const tabs = findByClass(tree, 'dst-tab');
-  check('面板有多个标签页', tabs.length >= 3, tabs.map((t) => allText(t.kids)));
-  check('面板文案含持仓只数', /只持仓/.test(allText(tree)), null);
+  const rail = findByClass(tree, 'dst-rail-item');
+  check('竖排导航有多个标签页', rail.length >= 3, rail.map((t) => allText(t.kids)));
+  check('竖排导航含「首页」', rail.some((n) => /首页/.test(allText(n.kids))), null);
+  check('面板文案含持仓只数（竖排导航底部）', /只持仓/.test(allText(tree)), null);
+}
+
+section('首页指数卡片（点卡片出图表，指数无成本线/盘口/复权）');
+{
+  const clickRail = (label) => {
+    const b = collect(tree).filter((n) => n.tag === 'button').find((x) => allText(x.kids).includes(label));
+    if (b) b.props.onClick({});
+    return !!b;
+  };
+  check('切到首页', clickRail('首页'));
+  await settle(8);
+  const cards = findByClass(tree, 'dst-idx');
+  check('首页 8 张指数卡片', cards.length === 8, cards.length);
+
+  const reqsBefore = fetchLog.length;
+  cards[0].props.onClick({ preventDefault() {}, stopPropagation() {} });
+  await settle(14);
+  check('点卡片拉了分时', fetchLog.slice(reqsBefore).some((u) => u.includes('/trends')),
+    fetchLog.slice(reqsBefore).slice(0, 4));
+  const title = findByClass(tree, 'dst-kline-title')[0];
+  check('详情区展开且标题是上证指数', !!title && /上证指数/.test(allText(title.kids)), null);
+  check('指数详情没有成本线', findByClass(tree, 'dst-cost-line').length === 0,
+    findByClass(tree, 'dst-cost-line').length);
+  check('指数详情没有五档盘口', findByClass(tree, 'dst-book').length === 0,
+    findByClass(tree, 'dst-book').length);
+  check('指数详情没有复权按钮',
+    !collect(tree).some((n) => n.tag === 'button' && /前复权|后复权|不复权/.test(allText(n.kids))), null);
+
+  const klineBtn = collect(tree).filter((n) => n.tag === 'button').find((b) => allText(b.kids) === 'K线');
+  check('有「K线」切换按钮', !!klineBtn, null);
+  if (klineBtn) klineBtn.props.onClick({});
+  await settle(12);
+  check('K线请求发出', fetchLog.slice(reqsBefore).some((u) => u.includes('/kline')),
+    fetchLog.filter((u) => u.includes('/kline')).slice(-1));
+
+  // 再点一次卡片收起详情
+  const cards2 = findByClass(tree, 'dst-idx');
+  if (cards2.length) cards2[0].props.onClick({ preventDefault() {}, stopPropagation() {} });
+  await settle(10);
+  check('再点卡片收起详情', findByClass(tree, 'dst-kline-title').length === 0,
+    findByClass(tree, 'dst-kline-title').length);
+
+  // 后续用例从持仓表格开始：切回「持仓」
+  check('切回持仓', clickRail('持仓'));
+  await settle(8);
 }
 
 section('持仓表格');
@@ -1646,10 +1718,12 @@ section('组件开关（设置 → 显示）');
   await settle(10);
   check('关掉「AI 分析标签页」', clickSettingToggle('AI 分析标签页'));
   await settle(12);
-  check('标签栏里没有流水了', !btnTexts().includes('流水'), btnTexts().join(','));
-  check('标签栏里没有 AI 分析了', !btnTexts().includes('AI 分析'), null);
+  // 竖排导航按钮文案带 emoji 前缀，用 includes 匹配
+  const hasNav = (label) => btnTexts().some((t) => t.includes(label));
+  check('标签栏里没有流水了', !hasNav('流水'), btnTexts().join(','));
+  check('标签栏里没有 AI 分析了', !hasNav('AI 分析'), null);
   check('添加/设置/持仓还在，用户不会把自己锁死',
-    btnTexts().includes('添加') && btnTexts().includes('设置'), null);
+    hasNav('添加') && hasNav('设置'), null);
 
   // ---- 当前标签页被关掉时自动退回 ----
   check('把流水标签页打开', clickSettingToggle('流水标签页'));
@@ -1657,14 +1731,14 @@ section('组件开关（设置 → 显示）');
   check('打开流水页', clickText('流水'));
   await settle(10);
   const onTab = (label) => collect(tree).some((n) => n.tag === 'button'
-    && allText(n).trim() === label && String(n.props.className).includes('dst-on'));
+    && allText(n).includes(label) && String(n.props.className).includes('dst-on'));
   check('确实停在流水页', onTab('流水'), null);
   // 模拟「在别处把这个标签页关了」：改数据 + 走一次轮询
   STATE.settings.showTrades = false;
   poke();
   await settle(16);
   check('当前标签页被关掉后自动退回一个还开着的',
-    !onTab('流水') && (onTab('持仓') || onTab('添加') || onTab('设置')), null);
+    !onTab('流水') && (onTab('首页') || onTab('持仓') || onTab('添加') || onTab('设置')), null);
 
   // ---- 恢复默认，后面的用例还要用 ----
   STATE.settings.showTrend = true;
@@ -1782,10 +1856,16 @@ section('全局面板渲染（挂载即轮询；卸载由外壳负责）');
   check('内容区有限宽包装（不至于拉满整个主栏）',
     collect(tree).some((n) => n.props && n.props.style && /900px/.test(String(n.props.style.maxWidth || ''))),
     null);
-  check('面板复用标签栏（持仓/自选…）',
-    findByClass(tree, 'dst-tab').length >= 5
-      && /持仓/.test(allText(tree)) && /自选/.test(allText(tree)),
-    findByClass(tree, 'dst-tab').length);
+  check('面板复用竖排导航（首页/持仓/自选…）',
+    findByClass(tree, 'dst-rail-item').length >= 5
+      && /首页/.test(allText(tree)) && /持仓/.test(allText(tree)) && /自选/.test(allText(tree)),
+    findByClass(tree, 'dst-rail-item').length);
+  check('默认渲染首页指数卡片', findByClass(tree, 'dst-idx').length === 8,
+    findByClass(tree, 'dst-idx').length);
+  // 表格在持仓标签里：切过去再验
+  const toHoldings = collect(tree).filter((n) => n.tag === 'button').find((b) => allText(b.kids).includes('持仓'));
+  if (toHoldings) toHoldings.props.onClick({});
+  tree = await settleNode({ __el: true, type: page, props: {} }, 'boardPage', 10);
   check('面板复用持仓表格',
     collect(tree).filter((n) => n.tag === 'tr').length >= 2, null);
   const trs = collect(tree).filter((n) => n.tag === 'tr' && typeof n.props.onClick === 'function');
