@@ -1213,6 +1213,68 @@ section('首页：分红统计与打新日历');
   check('打新卡注明仅 A 股', /仅 A 股/.test(allText(tree)), null);
 }
 
+section('显隐金额（眼睛按钮）');
+{
+  const clickRail = (label) => {
+    const b = collect(tree).filter((n) => n.tag === 'button').find((x) => allText(x.kids).includes(label));
+    if (b) b.props.onClick({});
+    return !!b;
+  };
+  const poke = () => { for (const it of [...intervals.values()]) it.fn(); };
+
+  check('切到首页', clickRail('首页'));
+  await settle(12);
+  const eye = findByClass(tree, 'dst-eye')[0];
+  check('摘要卡上有眼睛按钮', !!eye, findByClass(tree, 'dst-eye').length);
+  check('默认是「显示」态', eye && eye.props['aria-pressed'] === 'false', eye && eye.props['aria-pressed']);
+  check('默认看到真实总资产', /¥24\.98万/.test(allText(findByClass(tree, 'dst-sum-card')[0].kids)),
+    allText(findByClass(tree, 'dst-sum-card')[0].kids).slice(0, 120));
+
+  eye.props.onClick({ preventDefault() {}, stopPropagation() {} });
+  await settle(12);
+  check('隐藏开关写回宿主', STATE.settings.hideAmounts === true, STATE.settings.hideAmounts);
+  const sumText = () => allText(findByClass(tree, 'dst-sum-card')[0].kids);
+  check('摘要卡金额变成星号', /\*\*\*\*/.test(sumText()), sumText().slice(0, 120));
+  check('摘要卡不再出现真实金额', !/24\.98万/.test(sumText()), sumText().slice(0, 120));
+  check('百分比也一起遮', !/9\.53%/.test(sumText()), sumText().slice(0, 120));
+  check('眼睛切到按下态', findByClass(tree, 'dst-eye')[0].props['aria-pressed'] === 'true', null);
+  check('现金图例金额也遮了', !/¥5\.00万/.test(sumText()), sumText().slice(0, 200));
+
+  // 持仓表格同样不能漏
+  check('切到持仓', clickRail('持仓'));
+  await settle(12);
+  const masks = findByClass(tree, 'dst-mask');
+  check('持仓表的持股/成本/市值都打了星号', masks.length >= 4, masks.length);
+  check('持仓表不再出现股数', !/\b100 股\b/.test(allText(tree)), null);
+
+  // 切回首页并恢复显示
+  check('切回首页', clickRail('首页'));
+  await settle(12);
+  findByClass(tree, 'dst-eye')[0].props.onClick({ preventDefault() {}, stopPropagation() {} });
+  await settle(12);
+  check('恢复显示后开关归位', STATE.settings.hideAmounts === false, STATE.settings.hideAmounts);
+  check('恢复后金额回来了', /¥24\.98万/.test(sumText()), sumText().slice(0, 120));
+
+  // 没录现金时显示 0，不是 --
+  const backupAccounts = STATE.accounts.slice();
+  const backupSummary = { ...STATE.summary };
+  STATE.accounts = [];
+  STATE.summary = {
+    ...STATE.summary, hasCash: false, totalAssets: null, totalInvested: null, cash: 0,
+  };
+  poke();
+  await settle(10);
+  const noCash = sumText();
+  check('没录现金时总资产显示 0 而不是 --', /¥0\.00/.test(noCash) && !/--/.test(noCash), noCash.slice(0, 140));
+  check('没数据的盈亏也显示 0', !/--/.test(noCash), noCash.slice(0, 140));
+
+  // 还原夹具，别影响后面的用例
+  STATE.accounts = backupAccounts;
+  STATE.summary = backupSummary;
+  poke();
+  await settle(10);
+}
+
 section('添加页：手动记一笔分红');
 {
   const clickRail = (label) => {

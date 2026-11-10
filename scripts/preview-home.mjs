@@ -16,6 +16,9 @@ const clientPath = path.join(root, 'lib', 'client.js');
 const out = process.argv[2] || path.join(root, '.preview-home.png');
 const width = Number(process.argv[3]) || 900;
 const shell = process.argv[4] || 'none';
+/** --mask：把金额渲染成隐藏态，用来核对星号排版 */
+const masked = process.argv.includes('--mask');
+const M = (v) => (masked ? '****' : v);
 
 const src = readFileSync(clientPath, 'utf8');
 const startTag = 'const CSS = `';
@@ -32,21 +35,22 @@ const idxCard = (name, price, chg, pct, dir) => `
 const stack = `
 <div class="dst-home-stack">
   <div class="dst-fade-in"><div class="dst-sum-card">
+    <button class="dst-eye" type="button" aria-pressed="${masked ? "true" : "false"}"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M2.2 12S5.8 5.6 12 5.6 21.8 12 21.8 12 18.2 18.4 12 18.4 2.2 12 2.2 12z"/><circle cx="12" cy="12" r="2.5"/>${masked ? '<path d="M3.6 20.4 20.4 3.6"/>' : ''}</svg></button>
     <div class="dst-sum-grid">
-      <div class="dst-metric"><span class="dst-metric-k">总资产</span><span class="dst-metric-v dst-big">¥27.89万</span><span class="dst-metric-s">现金 ¥6.20万 + 持仓市值</span></div>
-      <div class="dst-metric"><span class="dst-metric-k">总投入</span><span class="dst-metric-v">¥23.44万</span><span class="dst-metric-s">现金 + 持仓成本</span></div>
-      <div class="dst-metric"><span class="dst-metric-k">持仓市值</span><span class="dst-metric-v">¥18.88万</span><span class="dst-metric-s">2 只持仓</span></div>
-      <div class="dst-metric"><span class="dst-metric-k">持仓成本</span><span class="dst-metric-v">¥17.24万</span><span class="dst-metric-s">股数 × 成本价</span></div>
-      <div class="dst-metric"><span class="dst-metric-k">浮动盈亏</span><span class="dst-metric-v dst-up">+1.64万 (+9.53%)</span><span class="dst-metric-s">市值 − 成本</span></div>
-      <div class="dst-metric"><span class="dst-metric-k">当日盈亏</span><span class="dst-metric-v dst-down">-120.50 (-0.06%)</span><span class="dst-metric-s">按昨收计算</span></div>
+      <div class="dst-metric"><span class="dst-metric-k">总资产</span><span class="dst-metric-v dst-big">${M("¥27.89万")}</span><span class="dst-metric-s">现金 ¥6.20万 + 持仓市值</span></div>
+      <div class="dst-metric"><span class="dst-metric-k">总投入</span><span class="dst-metric-v">${M("¥23.44万")}</span><span class="dst-metric-s">现金 + 持仓成本</span></div>
+      <div class="dst-metric"><span class="dst-metric-k">持仓市值</span><span class="dst-metric-v">${M("¥18.88万")}</span><span class="dst-metric-s">2 只持仓</span></div>
+      <div class="dst-metric"><span class="dst-metric-k">持仓成本</span><span class="dst-metric-v">${M("¥17.24万")}</span><span class="dst-metric-s">股数 × 成本价</span></div>
+      <div class="dst-metric"><span class="dst-metric-k">浮动盈亏</span><span class="dst-metric-v ${masked ? "" : "dst-up"}">${M("+1.64万 (+9.53%)")}</span><span class="dst-metric-s">市值 − 成本</span></div>
+      <div class="dst-metric"><span class="dst-metric-k">当日盈亏</span><span class="dst-metric-v ${masked ? "" : "dst-down"}">${M("-120.50 (-0.06%)")}</span><span class="dst-metric-s">按昨收计算</span></div>
     </div>
     <div class="dst-cash">
-      <div class="dst-donut" style="background:conic-gradient(#4f7cff 0% 80%, #2fd08a 80% 100%)">
-        <div class="dst-donut-center"><span class="dst-donut-k">总现金</span><span class="dst-donut-v">¥6.20万</span></div>
+      <div class="dst-donut" style="background:${masked ? "rgba(0,0,0,.06)" : "conic-gradient(#4f7cff 0% 80%, #2fd08a 80% 100%)"}">
+        <div class="dst-donut-center"><span class="dst-donut-k">总现金</span><span class="dst-donut-v">${M("¥6.20万")}</span></div>
       </div>
       <div class="dst-legend">
-        <div class="dst-legend-row"><span class="dst-legend-dot" style="background:#4f7cff"></span><span class="dst-legend-name">A股主账户</span><span class="dst-legend-val">¥5.00万 · 80.6%</span></div>
-        <div class="dst-legend-row"><span class="dst-legend-dot" style="background:#2fd08a"></span><span class="dst-legend-name">港股账户</span><span class="dst-legend-val">¥1.20万 · 19.4%</span></div>
+        <div class="dst-legend-row"><span class="dst-legend-dot" style="background:#4f7cff"></span><span class="dst-legend-name">A股主账户</span><span class="dst-legend-val">${M("¥5.00万 · 80.6%")}</span></div>
+        <div class="dst-legend-row"><span class="dst-legend-dot" style="background:#2fd08a"></span><span class="dst-legend-name">港股账户</span><span class="dst-legend-val">${M("¥1.20万 · 19.4%")}</span></div>
       </div>
     </div>
   </div></div>
